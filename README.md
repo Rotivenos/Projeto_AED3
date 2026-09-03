@@ -20,36 +20,6 @@ A solução encontrada também passa por uma etapa de validação.
 - Python 3.10+
 - Google OR-Tools
 
-## Como executar
-
-### 1. Criar ambiente virtual (opcional)
-
-Windows:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-Linux/macOS:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Instalar dependências
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Executar
-
-```bash
-python main.py
-```
-
 ## Estrutura
 
 ```text
