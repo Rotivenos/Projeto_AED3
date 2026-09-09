@@ -1,42 +1,51 @@
-# Sistema de Otimização de Rotas de Entrega — V1
+# Projeto de Rotas — V2.2
 
-Primeiro protótipo acadêmico do projeto.
+Agora o sistema possui Flask + SQLite + OR-Tools.
 
-## O que esta versão faz
+## Recursos
 
-O programa usa o Google OR-Tools para encontrar rotas para uma frota de caminhões considerando:
-
-- capacidade de carga;
-- horário limite de entrega;
-- tempo de deslocamento entre pontos;
-- tempo de serviço/descarga;
-- utilização de caminhões;
-- minimização do custo total de rota.
-
-A solução encontrada também passa por uma etapa de validação.
-
-## Tecnologias
-
-- Python 3.10+
-- Google OR-Tools
-
-## Estrutura
-
-```text
-projeto_rotas/
-├── main.py
-├── requirements.txt
-└── README.md
-```
-
-## Próxima evolução
-
-A V2 pode trocar os dados fictícios por:
-
-- SQLite;
-- cadastro de clientes;
 - cadastro de caminhões;
 - cadastro de pedidos;
-- tela web com Flask;
-- mapa;
-- comparação entre rota comum e rota otimizada.
+- armazenamento em SQLite;
+- botão de otimização;
+- roteamento com OR-Tools;
+- restrição de capacidade;
+- restrição de horário limite;
+- tentativa de usar menos caminhões;
+- exibição das rotas e ocupação.
+
+## Executar
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
+```
+
+Abrir:
+
+http://127.0.0.1:5000
+
+## Observação
+
+As distâncias ainda são fictícias. O endereço é armazenado, mas ainda
+não é convertido em latitude/longitude. Essa será uma evolução posterior.
+
+## Teste sugerido
+
+Cadastre:
+
+Caminhões:
+- ABC1234 — 10.000 kg
+- DEF5678 — 10.000 kg
+- GHI9012 — 10.000 kg
+
+Pedidos:
+- Mercado A — 2.000 kg — 09:00
+- Loja B — 3.000 kg — 10:00
+- Mercado C — 4.000 kg — 11:00
+- Loja D — 2.000 kg — 11:30
+- Mercado E — 3.000 kg — 12:00
+
+Clique em OTIMIZAR ROTAS.

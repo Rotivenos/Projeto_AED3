@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Otimização de Rotas - V2.2</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+    <h1>Sistema de Otimização de Rotas</h1>
+    <p>V2.2 — SQLite + Flask + OR-Tools</p>
+</header>
+
+<main>
+    <section class="top-grid">
+        <div class="panel">
+            <h2>Novo caminhão</h2>
+            <form action="{{ url_for('adicionar_caminhao') }}" method="post">
+                <label>Placa</label>
+                <input name="placa" required placeholder="ABC1D23">
+
+                <label>Capacidade (kg)</label>
+                <input name="capacidade_kg" type="number" min="1" required placeholder="10000">
+
+                <button type="submit">Cadastrar caminhão</button>
+            </form>
+        </div>
+
+        <div class="panel">
+            <h2>Novo pedido</h2>
+            <form action="{{ url_for('adicionar_pedido') }}" method="post">
+                <label>Cliente</label>
+                <input name="cliente" required placeholder="Mercado A">
+
+                <label>Endereço</label>
+                <input name="endereco" required placeholder="Rua X, 100">
+
+                <label>Peso (kg)</label>
+                <input name="peso_kg" type="number" min="1" required placeholder="2000">
+
+                <label>Prazo</label>
+                <input name="prazo" type="time" required>
+
+                <button type="submit">Cadastrar pedido</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-title">
+            <h2>Otimização</h2>
+            <form action="{{ url_for('executar_otimizacao') }}" method="post">
+                <button class="primary" type="submit">OTIMIZAR ROTAS</button>
+            </form>
+        </div>
+
+        {% if resultado %}
+            {% if resultado.erro %}
+                <div class="alert error">
+                    <strong>Não foi possível gerar as rotas.</strong>
+                    <p>{{ resultado.erro }}</p>
+                </div>
+            {% else %}
+                <div class="stats">
+                    <div><strong>{{ resultado.pedidos_atendidos }}</strong><span>Pedidos atendidos</span></div>
+                    <div><strong>{{ resultado.caminhoes_utilizados }}</strong><span>Caminhões utilizados</span></div>
+                    <div><strong>{{ resultado.distancia_total }}</strong><span>Minutos de deslocamento</span></div>
+                    <div><strong>0</strong><span>Atrasos</span></div>
+                </div>
+
+                {% for rota in resultado.rotas %}
+                <div class="route">
+                    <div class="route-header">
+                        <div>
+                            <h3>Caminhão {{ rota.placa }}</h3>
+                            <p>
+                                Carga: {{ rota.carga_kg }} / {{ rota.capacidade_kg }} kg
+                                — Ocupação: {{ rota.ocupacao }}%
+                            </p>
+                        </div>
+                    </div>
+
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Ordem</th>
+                            <th>Cliente</th>
+                            <th>Endereço</th>
+                            <th>Peso</th>
+                            <th>Chegada</th>
+                            <th>Prazo</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for parada in rota.paradas %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td>{{ parada.cliente }}</td>
+                            <td>{{ parada.endereco }}</td>
+                            <td>{{ parada.peso_kg }} kg</td>
+                            <td>{{ parada.chegada }}</td>
+                            <td>{{ parada.prazo }}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endfor %}
+            {% endif %}
+        {% endif %}
+    </section>
+
+    <section class="two-col">
+        <div class="panel">
+            <h2>Frota</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Placa</th>
+                    <th>Capacidade</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for caminhao in caminhoes %}
+                <tr>
+                    <td>{{ caminhao.placa }}</td>
+                    <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
+                    <td>{{ caminhao.status }}</td>
+                    <td>
+                        <form action="{{ url_for('excluir_caminhao', caminhao_id=caminhao.id) }}" method="post">
+                            <button class="danger" type="submit">Excluir</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4">Nenhum caminhão cadastrado.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h2>Pedidos</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Cliente</th>
+                    <th>Peso</th>
+                    <th>Prazo</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for pedido in pedidos %}
+                <tr>
+                    <td>{{ pedido.cliente }}</td>
+                    <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
+                    <td>{{ pedido.prazo }}</td>
+                    <td>{{ pedido.status }}</td>
+                    <td>
+                        <form action="{{ url_for('excluir_pedido', pedido_id=pedido.id) }}" method="post">
+                            <button class="danger" type="submit">Excluir</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5">Nenhum pedido cadastrado.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+</body>
+</html>
