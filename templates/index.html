@@ -3,16 +3,22 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Otimização de Rotas - V2.2</title>
+    <title>Otimização de Rotas - V2.4</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <header>
     <h1>Sistema de Otimização de Rotas</h1>
-    <p>V2.2 — SQLite + Flask + OR-Tools</p>
+    <p>V2.4 — endereço → localização automática</p>
 </header>
 
 <main>
+    {% if mensagem %}
+    <div class="alert {{ tipo_mensagem }}">
+        {{ mensagem }}
+    </div>
+    {% endif %}
+
     <section class="top-grid">
         <div class="panel">
             <h2>Novo caminhão</h2>
@@ -29,12 +35,19 @@
 
         <div class="panel">
             <h2>Novo pedido</h2>
+            <p class="muted">
+                Não é necessário informar latitude ou longitude. O sistema localiza o endereço automaticamente.
+            </p>
+
             <form action="{{ url_for('adicionar_pedido') }}" method="post">
                 <label>Cliente</label>
                 <input name="cliente" required placeholder="Mercado A">
 
                 <label>Endereço</label>
-                <input name="endereco" required placeholder="Rua X, 100">
+                <input name="endereco" required placeholder="Av. Exemplo, 100">
+
+                <label>Cidade / UF</label>
+                <input name="cidade" placeholder="Serra - ES">
 
                 <label>Peso (kg)</label>
                 <input name="peso_kg" type="number" min="1" required placeholder="2000">
@@ -42,14 +55,19 @@
                 <label>Prazo</label>
                 <input name="prazo" type="time" required>
 
-                <button type="submit">Cadastrar pedido</button>
+                <button type="submit">Cadastrar e localizar endereço</button>
             </form>
         </div>
     </section>
 
     <section class="panel">
         <div class="section-title">
-            <h2>Otimização</h2>
+            <div>
+                <h2>Otimização</h2>
+                <p class="muted">
+                    Os pedidos pendentes serão enviados ao motor de otimização.
+                </p>
+            </div>
             <form action="{{ url_for('executar_otimizacao') }}" method="post">
                 <button class="primary" type="submit">OTIMIZAR ROTAS</button>
             </form>
@@ -65,48 +83,92 @@
                 <div class="stats">
                     <div><strong>{{ resultado.pedidos_atendidos }}</strong><span>Pedidos atendidos</span></div>
                     <div><strong>{{ resultado.caminhoes_utilizados }}</strong><span>Caminhões utilizados</span></div>
-                    <div><strong>{{ resultado.distancia_total }}</strong><span>Minutos de deslocamento</span></div>
-                    <div><strong>0</strong><span>Atrasos</span></div>
+                    <div><strong>{{ resultado.distancia_total }} km</strong><span>Distância geográfica estimada</span></div>
+                    <div><strong>{{ resultado.atrasos }}</strong><span>Atrasos</span></div>
                 </div>
+
+                <div id="map"></div>
 
                 {% for rota in resultado.rotas %}
                 <div class="route">
-                    <div class="route-header">
-                        <div>
-                            <h3>Caminhão {{ rota.placa }}</h3>
-                            <p>
-                                Carga: {{ rota.carga_kg }} / {{ rota.capacidade_kg }} kg
-                                — Ocupação: {{ rota.ocupacao }}%
-                            </p>
-                        </div>
-                    </div>
+                    <h3>Caminhão {{ rota.placa }}</h3>
+                    <p>
+                        Carga: {{ rota.carga_kg }} / {{ rota.capacidade_kg }} kg
+                        — Ocupação: {{ rota.ocupacao }}%
+                    </p>
 
                     <table>
                         <thead>
-                        <tr>
-                            <th>Ordem</th>
-                            <th>Cliente</th>
-                            <th>Endereço</th>
-                            <th>Peso</th>
-                            <th>Chegada</th>
-                            <th>Prazo</th>
-                        </tr>
+                            <tr>
+                                <th>Ordem</th>
+                                <th>Cliente</th>
+                                <th>Endereço</th>
+                                <th>Peso</th>
+                                <th>Chegada</th>
+                                <th>Prazo</th>
+                            </tr>
                         </thead>
                         <tbody>
                         {% for parada in rota.paradas %}
-                        <tr>
-                            <td>{{ loop.index }}</td>
-                            <td>{{ parada.cliente }}</td>
-                            <td>{{ parada.endereco }}</td>
-                            <td>{{ parada.peso_kg }} kg</td>
-                            <td>{{ parada.chegada }}</td>
-                            <td>{{ parada.prazo }}</td>
-                        </tr>
+                            <tr>
+                                <td>{{ parada.ordem }}</td>
+                                <td>{{ parada.cliente }}</td>
+                                <td>{{ parada.endereco }}</td>
+                                <td>{{ parada.peso_kg }} kg</td>
+                                <td>{{ parada.chegada }}</td>
+                                <td>{{ parada.prazo }}</td>
+                            </tr>
                         {% endfor %}
                         </tbody>
                     </table>
                 </div>
                 {% endfor %}
+
+                <script id="rotas-data" type="application/json">
+                    {{ resultado.rotas | tojson }}
+                </script>
+                <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                <script>
+                    const rotas = JSON.parse(document.getElementById("rotas-data").textContent);
+                    const deposito = [-20.3155, -40.3128];
+                    const map = L.map("map").setView(deposito, 12);
+
+                    L.tileLayer(
+                        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                        {
+                            maxZoom: 19,
+                            attribution: "&copy; OpenStreetMap contributors"
+                        }
+                    ).addTo(map);
+
+                    L.marker(deposito)
+                        .addTo(map)
+                        .bindPopup("<b>Depósito</b>");
+
+                    const todos = [deposito];
+
+                    rotas.forEach((rota) => {
+                        const pontos = rota.pontos_rota;
+                        const poly = L.polyline(pontos, { weight: 4 }).addTo(map);
+                        poly.bindPopup("Rota do caminhão " + rota.placa);
+
+                        rota.paradas.forEach((parada) => {
+                            const pos = [parada.latitude, parada.longitude];
+                            todos.push(pos);
+                            L.marker(pos)
+                                .addTo(map)
+                                .bindPopup(
+                                    "<b>" + parada.cliente + "</b><br>" +
+                                    "Pedido #" + parada.pedido_id + "<br>" +
+                                    "Chegada: " + parada.chegada
+                                );
+                        });
+                    });
+
+                    if (todos.length > 1) {
+                        map.fitBounds(todos, { padding: [20, 20] });
+                    }
+                </script>
             {% endif %}
         {% endif %}
     </section>
@@ -116,27 +178,22 @@
             <h2>Frota</h2>
             <table>
                 <thead>
-                <tr>
-                    <th>Placa</th>
-                    <th>Capacidade</th>
-                    <th>Status</th>
-                    <th></th>
-                </tr>
+                    <tr><th>Placa</th><th>Capacidade</th><th>Status</th><th></th></tr>
                 </thead>
                 <tbody>
                 {% for caminhao in caminhoes %}
-                <tr>
-                    <td>{{ caminhao.placa }}</td>
-                    <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
-                    <td>{{ caminhao.status }}</td>
-                    <td>
-                        <form action="{{ url_for('excluir_caminhao', caminhao_id=caminhao.id) }}" method="post">
-                            <button class="danger" type="submit">Excluir</button>
-                        </form>
-                    </td>
-                </tr>
+                    <tr>
+                        <td>{{ caminhao.placa }}</td>
+                        <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
+                        <td>{{ caminhao.status }}</td>
+                        <td>
+                            <form action="{{ url_for('excluir_caminhao', caminhao_id=caminhao.id) }}" method="post">
+                                <button class="danger" type="submit">Excluir</button>
+                            </form>
+                        </td>
+                    </tr>
                 {% else %}
-                <tr><td colspan="4">Nenhum caminhão cadastrado.</td></tr>
+                    <tr><td colspan="4">Nenhum caminhão cadastrado.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
@@ -146,33 +203,36 @@
             <h2>Pedidos</h2>
             <table>
                 <thead>
-                <tr>
-                    <th>Cliente</th>
-                    <th>Peso</th>
-                    <th>Prazo</th>
-                    <th>Status</th>
-                    <th></th>
-                </tr>
+                    <tr><th>Cliente</th><th>Endereço</th><th>Peso</th><th>Prazo</th><th></th></tr>
                 </thead>
                 <tbody>
                 {% for pedido in pedidos %}
-                <tr>
-                    <td>{{ pedido.cliente }}</td>
-                    <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
-                    <td>{{ pedido.prazo }}</td>
-                    <td>{{ pedido.status }}</td>
-                    <td>
-                        <form action="{{ url_for('excluir_pedido', pedido_id=pedido.id) }}" method="post">
-                            <button class="danger" type="submit">Excluir</button>
-                        </form>
-                    </td>
-                </tr>
+                    <tr>
+                        <td>{{ pedido.cliente }}</td>
+                        <td title="{{ pedido.endereco_geocodificado or '' }}">
+                            {{ pedido.endereco }}{% if pedido.cidade %}, {{ pedido.cidade }}{% endif %}
+                        </td>
+                        <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
+                        <td>{{ pedido.prazo }}</td>
+                        <td>
+                            <form action="{{ url_for('excluir_pedido', pedido_id=pedido.id) }}" method="post">
+                                <button class="danger" type="submit">Excluir</button>
+                            </form>
+                        </td>
+                    </tr>
                 {% else %}
-                <tr><td colspan="5">Nenhum pedido cadastrado.</td></tr>
+                    <tr><td colspan="5">Nenhum pedido cadastrado.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
         </div>
+    </section>
+
+    <section class="panel note">
+        <strong>Como funciona a localização:</strong>
+        o sistema envia o endereço digitado para o Nominatim/OpenStreetMap,
+        recebe a latitude e longitude e salva essas coordenadas no banco.
+        O usuário não precisa conhecer coordenadas. O mapa usa os dados do OpenStreetMap.
     </section>
 </main>
 </body>

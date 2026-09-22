@@ -1,13 +1,21 @@
 from flask import Flask, render_template, request, redirect, url_for
 import sqlite3
 from pathlib import Path
+import math
+import time
 
+import requests
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "rotas.db"
 
 app = Flask(__name__)
+app.secret_key = "projeto-rotas-academico"
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+USER_AGENT = "ProjetoRotasAcademico/2.4 (projeto academico)"
+_last_geocode_request = 0.0
 
 
 def get_db():
@@ -18,7 +26,8 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    conn.executescript("""
+    conn.executescript(
+        """
         CREATE TABLE IF NOT EXISTS caminhoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             placa TEXT NOT NULL UNIQUE,
@@ -30,168 +39,232 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cliente TEXT NOT NULL,
             endereco TEXT NOT NULL,
+            cidade TEXT,
+            latitude REAL,
+            longitude REAL,
+            endereco_geocodificado TEXT,
             peso_kg REAL NOT NULL,
             prazo TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'Pendente'
         );
+        """
+    )
 
-        CREATE TABLE IF NOT EXISTS rotas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            caminhao_id INTEGER NOT NULL,
-            ordem INTEGER NOT NULL,
-            pedido_id INTEGER NOT NULL,
-            chegada_min INTEGER NOT NULL,
-            FOREIGN KEY (caminhao_id) REFERENCES caminhoes(id),
-            FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
-        );
-    """)
+    # Migração simples de versões anteriores.
+    colunas = {
+        row["name"] for row in conn.execute("PRAGMA table_info(pedidos)").fetchall()
+    }
+    if "cidade" not in colunas:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN cidade TEXT")
+    if "latitude" not in colunas:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN latitude REAL")
+    if "longitude" not in colunas:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN longitude REAL")
+    if "endereco_geocodificado" not in colunas:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN endereco_geocodificado TEXT")
+
     conn.commit()
     conn.close()
 
 
 def hora_para_minutos(hora):
-    """Converte HH:MM para minutos desde meia-noite."""
     h, m = map(int, hora.split(":"))
     return h * 60 + m
 
 
 def minutos_para_hora(minutos):
+    minutos = max(0, int(minutos))
     return f"{minutos // 60:02d}:{minutos % 60:02d}"
 
 
-def construir_dados(pedidos, caminhoes):
+def geocodificar_endereco(endereco, cidade=""):
     """
-    Constrói um problema pequeno de roteamento.
-    Como os pedidos ainda não têm coordenadas reais, usamos uma matriz
-    fictícia baseada no índice dos pontos. Isso mantém a V2 simples.
+    Converte texto de endereço em latitude/longitude usando Nominatim.
+
+    O serviço público deve ser usado com baixa frequência. Por isso a função
+    aguarda pelo menos ~1 segundo entre consultas feitas por este processo.
     """
-    n = len(pedidos) + 1  # + depósito
-    distance_matrix = [[0] * n for _ in range(n)]
+    global _last_geocode_request
 
-    # Distâncias fictícias assimétricas em minutos.
-    # Futuramente será substituída por uma matriz real.
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            distance_matrix[i][j] = 5 + abs(i - j) * 4
+    endereco = endereco.strip()
+    cidade = (cidade or "").strip()
 
-    demands = [0] + [int(p["peso_kg"]) for p in pedidos]
+    if not endereco:
+        return None, "Informe o endereço."
 
-    # Depósito: operação das 06:00 às 18:00.
-    time_windows = [(360, 1080)]
-    for p in pedidos:
-        limite = hora_para_minutos(p["prazo"])
-        # Nesta V2, a entrega pode ocorrer a partir das 06:00 até o prazo.
-        time_windows.append((360, limite))
+    consulta = f"{endereco}, {cidade}, Brasil" if cidade else f"{endereco}, Brasil"
 
-    service_time = [0] + [10 for _ in pedidos]
+    agora = time.monotonic()
+    espera = 1.05 - (agora - _last_geocode_request)
+    if espera > 0:
+        time.sleep(espera)
 
-    capacities = [int(c["capacidade_kg"]) for c in caminhoes]
+    try:
+        resposta = requests.get(
+            NOMINATIM_URL,
+            params={
+                "q": consulta,
+                "format": "jsonv2",
+                "limit": 1,
+                "countrycodes": "br",
+                "addressdetails": 1,
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=10,
+        )
+        _last_geocode_request = time.monotonic()
+        resposta.raise_for_status()
+    except requests.RequestException as exc:
+        _last_geocode_request = time.monotonic()
+        return None, f"Não foi possível consultar o serviço de mapas: {exc}"
+
+    resultados = resposta.json()
+    if not resultados:
+        return None, "Endereço não encontrado. Confira o endereço e a cidade/UF."
+
+    item = resultados[0]
+    try:
+        latitude = float(item["lat"])
+        longitude = float(item["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None, "O serviço de mapas não retornou coordenadas válidas."
 
     return {
-        "distance_matrix": distance_matrix,
-        "demands": demands,
-        "time_windows": time_windows,
-        "service_time": service_time,
-        "vehicle_capacities": capacities,
-        "num_vehicles": len(caminhoes),
-        "depot": 0,
-    }
+        "latitude": latitude,
+        "longitude": longitude,
+        "display_name": item.get("display_name", consulta),
+    }, None
+
+
+def distancia_entre_pontos(lat1, lon1, lat2, lon2):
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+
+    raio_terra = 6371.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dp / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    )
+    return 2 * raio_terra * math.asin(math.sqrt(a))
+
+
+def construir_matriz(pedidos):
+    # Coordenada inicial do depósito do protótipo.
+    deposito = (-20.3155, -40.3128)
+    pontos = [deposito]
+
+    for pedido in pedidos:
+        if pedido["latitude"] is None or pedido["longitude"] is None:
+            return None
+        pontos.append((float(pedido["latitude"]), float(pedido["longitude"])))
+
+    matriz = []
+    for lat1, lon1 in pontos:
+        linha = []
+        for lat2, lon2 in pontos:
+            if lat1 == lat2 and lon1 == lon2:
+                linha.append(0.0)
+            else:
+                linha.append(round(distancia_entre_pontos(lat1, lon1, lat2, lon2), 3))
+        matriz.append(linha)
+    return matriz
+
+
+def minutos_de_viagem(distancia_km):
+    # Estimativa simples para o protótipo. A V2.5 poderá usar tempos pelas ruas.
+    return max(1, round((distancia_km / 35) * 60))
 
 
 def otimizar(pedidos, caminhoes):
     if not pedidos:
         return {"erro": "Não existem pedidos pendentes."}
-
     if not caminhoes:
         return {"erro": "Não existem caminhões disponíveis."}
 
-    data = construir_dados(pedidos, caminhoes)
+    matriz_km = construir_matriz(pedidos)
+    if matriz_km is None:
+        return {"erro": "Todos os pedidos precisam estar geocodificados."}
 
-    manager = pywrapcp.RoutingIndexManager(
-        len(data["distance_matrix"]),
-        data["num_vehicles"],
-        data["depot"]
-    )
+    n = len(pedidos) + 1
+    matriz_tempo = [
+        [minutos_de_viagem(matriz_km[i][j]) if i != j else 0 for j in range(n)]
+        for i in range(n)
+    ]
+
+    demandas = [0] + [int(p["peso_kg"]) for p in pedidos]
+    capacidades = [int(c["capacidade_kg"]) for c in caminhoes]
+
+    janelas = [(360, 1080)]
+    for pedido in pedidos:
+        janelas.append((360, hora_para_minutos(pedido["prazo"])))
+
+    manager = pywrapcp.RoutingIndexManager(n, len(caminhoes), 0)
     routing = pywrapcp.RoutingModel(manager)
 
-    # Capacidade
     def demanda_callback(index):
-        node = manager.IndexToNode(index)
-        return data["demands"][node]
+        return demandas[manager.IndexToNode(index)]
 
     demanda_index = routing.RegisterUnaryTransitCallback(demanda_callback)
-
     routing.AddDimensionWithVehicleCapacity(
         demanda_index,
         0,
-        data["vehicle_capacities"],
+        capacidades,
         True,
-        "Capacity"
+        "Capacity",
     )
 
-    # Tempo
     def tempo_callback(from_index, to_index):
         origem = manager.IndexToNode(from_index)
         destino = manager.IndexToNode(to_index)
-        deslocamento = data["distance_matrix"][origem][destino]
-        servico = data["service_time"][origem]
+        deslocamento = matriz_tempo[origem][destino]
+        servico = 10 if origem != 0 else 0
         return deslocamento + servico
 
     tempo_index = routing.RegisterTransitCallback(tempo_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(tempo_index)
-
-    routing.AddDimension(
-        tempo_index,
-        720,  # espera permitida
-        1080, # limite máximo do dia
-        False,
-        "Time"
-    )
+    routing.AddDimension(tempo_index, 720, 1080, False, "Time")
 
     time_dimension = routing.GetDimensionOrDie("Time")
-
-    for node, janela in enumerate(data["time_windows"]):
+    for node, janela in enumerate(janelas):
         index = manager.NodeToIndex(node)
         time_dimension.CumulVar(index).SetRange(janela[0], janela[1])
 
-    # Incentiva o uso de menos caminhões.
-    for vehicle_id in range(data["num_vehicles"]):
-        routing.SetFixedCostOfVehicle(100, vehicle_id)
+    # Custos fixos tornam o uso de menos caminhões preferível, sem permitir rota vazia.
+    for vehicle_id in range(len(caminhoes)):
+        routing.SetFixedCostOfVehicle(1000, vehicle_id)
 
     params = pywrapcp.DefaultRoutingSearchParameters()
-    params.first_solution_strategy = (
-        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-    )
-    params.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    )
+    params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+    params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     params.time_limit.seconds = 5
 
     solution = routing.SolveWithParameters(params)
-
     if not solution:
         return {
             "erro": (
                 "Não foi encontrada uma solução viável. "
-                "Verifique capacidade dos caminhões e prazos."
+                "Verifique capacidades, prazos e endereços."
             )
         }
 
-    resultado = []
+    rotas = []
     pedidos_atendidos = set()
-    distancia_total = 0
+    distancia_total = 0.0
 
     for vehicle_id, caminhao in enumerate(caminhoes):
         index = routing.Start(vehicle_id)
-
-        # Caminhão não utilizado.
         if solution.Value(routing.NextVar(index)) == routing.End(vehicle_id):
             continue
 
         carga_total = 0
         paradas = []
+        pontos_rota = [[-20.3155, -40.3128]]
+        ordem = 1
 
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
@@ -199,90 +272,111 @@ def otimizar(pedidos, caminhoes):
 
             if node != 0:
                 pedido = pedidos[node - 1]
-                pedido_id = pedido["id"]
-                pedidos_atendidos.add(pedido_id)
-
+                pedidos_atendidos.add(pedido["id"])
                 carga_total += int(pedido["peso_kg"])
+                pontos_rota.append([
+                    float(pedido["latitude"]),
+                    float(pedido["longitude"])
+                ])
 
                 paradas.append({
-                    "pedido_id": pedido_id,
+                    "pedido_id": pedido["id"],
                     "cliente": pedido["cliente"],
                     "endereco": pedido["endereco"],
+                    "latitude": float(pedido["latitude"]),
+                    "longitude": float(pedido["longitude"]),
                     "peso_kg": int(pedido["peso_kg"]),
                     "prazo": pedido["prazo"],
                     "chegada": minutos_para_hora(chegada),
-                    "chegada_min": chegada,
+                    "atraso": chegada > hora_para_minutos(pedido["prazo"]),
+                    "ordem": ordem,
                 })
+                ordem += 1
 
             next_index = solution.Value(routing.NextVar(index))
-
-            if not routing.IsEnd(next_index):
-                a = manager.IndexToNode(index)
-                b = manager.IndexToNode(next_index)
-                distancia_total += data["distance_matrix"][a][b]
-
+            a = manager.IndexToNode(index)
+            b = manager.IndexToNode(next_index)
+            distancia_total += matriz_km[a][b]
             index = next_index
 
-        resultado.append({
+        pontos_rota.append([-20.3155, -40.3128])
+
+        rotas.append({
             "caminhao_id": caminhao["id"],
             "placa": caminhao["placa"],
             "capacidade_kg": int(caminhao["capacidade_kg"]),
             "carga_kg": carga_total,
             "ocupacao": round((carga_total / caminhao["capacidade_kg"]) * 100, 1),
             "paradas": paradas,
+            "pontos_rota": pontos_rota,
         })
 
     if len(pedidos_atendidos) != len(pedidos):
-        return {"erro": "A solução encontrada não atendeu todos os pedidos."}
+        return {"erro": "A solução não conseguiu atender todos os pedidos."}
+
+    atrasos = sum(
+        1 for rota in rotas for parada in rota["paradas"] if parada["atraso"]
+    )
 
     return {
-        "rotas": resultado,
+        "rotas": rotas,
         "pedidos_atendidos": len(pedidos_atendidos),
-        "caminhoes_utilizados": len(resultado),
-        "distancia_total": distancia_total,
+        "caminhoes_utilizados": len(rotas),
+        "distancia_total": round(distancia_total, 2),
+        "atrasos": atrasos,
     }
 
 
-@app.route("/")
-def index():
+def carregar_dados():
     conn = get_db()
-
     caminhoes = conn.execute(
         "SELECT * FROM caminhoes ORDER BY id DESC"
     ).fetchall()
-
     pedidos = conn.execute(
-        "SELECT * FROM pedidos ORDER BY id DESC"
+        "SELECT * FROM pedidos ORDER BY prazo"
     ).fetchall()
-
     conn.close()
+    return caminhoes, pedidos
 
-    resultado = None
+
+def render_inicio(resultado=None, mensagem=None, tipo="info"):
+    caminhoes, pedidos = carregar_dados()
     return render_template(
         "index.html",
         caminhoes=caminhoes,
         pedidos=pedidos,
-        resultado=resultado
+        resultado=resultado,
+        mensagem=mensagem,
+        tipo_mensagem=tipo,
     )
+
+
+@app.route("/")
+def index():
+    return render_inicio()
 
 
 @app.post("/caminhoes")
 def adicionar_caminhao():
     placa = request.form["placa"].strip().upper()
-    capacidade = float(request.form["capacidade_kg"])
+    try:
+        capacidade = float(request.form["capacidade_kg"])
+        if not placa or capacidade <= 0:
+            raise ValueError
+    except ValueError:
+        return render_inicio(mensagem="Informe uma placa e uma capacidade válida.", tipo="error")
 
     conn = get_db()
     try:
         conn.execute(
             "INSERT INTO caminhoes (placa, capacidade_kg) VALUES (?, ?)",
-            (placa, capacidade)
+            (placa, capacidade),
         )
         conn.commit()
     except sqlite3.IntegrityError:
-        pass
-    finally:
         conn.close()
-
+        return render_inicio(mensagem="Essa placa já está cadastrada.", tipo="error")
+    conn.close()
     return redirect(url_for("index"))
 
 
@@ -290,21 +384,48 @@ def adicionar_caminhao():
 def adicionar_pedido():
     cliente = request.form["cliente"].strip()
     endereco = request.form["endereco"].strip()
-    peso = float(request.form["peso_kg"])
+    cidade = request.form.get("cidade", "").strip()
+
+    try:
+        peso = float(request.form["peso_kg"])
+        if not cliente or not endereco or peso <= 0:
+            raise ValueError
+    except ValueError:
+        return render_inicio(mensagem="Confira cliente, endereço e peso.", tipo="error")
+
     prazo = request.form["prazo"]
+
+    geocodificado, erro = geocodificar_endereco(endereco, cidade)
+    if erro:
+        return render_inicio(mensagem=erro, tipo="error")
 
     conn = get_db()
     conn.execute(
         """
-        INSERT INTO pedidos (cliente, endereco, peso_kg, prazo)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO pedidos
+        (cliente, endereco, cidade, latitude, longitude,
+         endereco_geocodificado, peso_kg, prazo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (cliente, endereco, peso, prazo)
+        (
+            cliente,
+            endereco,
+            cidade,
+            geocodificado["latitude"],
+            geocodificado["longitude"],
+            geocodificado["display_name"],
+            peso,
+            prazo,
+        ),
     )
     conn.commit()
     conn.close()
 
-    return redirect(url_for("index"))
+    mensagem = (
+        f"Pedido cadastrado. Localização encontrada: "
+        f"{geocodificado['display_name']}"
+    )
+    return render_inicio(mensagem=mensagem, tipo="success")
 
 
 @app.post("/caminhoes/<int:caminhao_id>/excluir")
@@ -328,35 +449,16 @@ def excluir_pedido(pedido_id):
 @app.post("/otimizar")
 def executar_otimizacao():
     conn = get_db()
-
     pedidos = conn.execute(
         "SELECT * FROM pedidos WHERE status = 'Pendente' ORDER BY prazo"
     ).fetchall()
-
     caminhoes = conn.execute(
         "SELECT * FROM caminhoes WHERE status = 'Disponível'"
     ).fetchall()
-
     conn.close()
 
     resultado = otimizar(pedidos, caminhoes)
-
-    # Renderiza a página diretamente com o resultado.
-    conn = get_db()
-    caminhoes_todos = conn.execute(
-        "SELECT * FROM caminhoes ORDER BY id DESC"
-    ).fetchall()
-    pedidos_todos = conn.execute(
-        "SELECT * FROM pedidos ORDER BY id DESC"
-    ).fetchall()
-    conn.close()
-
-    return render_template(
-        "index.html",
-        caminhoes=caminhoes_todos,
-        pedidos=pedidos_todos,
-        resultado=resultado
-    )
+    return render_inicio(resultado=resultado)
 
 
 if __name__ == "__main__":
