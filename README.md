@@ -1,7 +1,5 @@
 # Projeto de Rotas — V2.4
 
-Nesta versão o usuário NÃO precisa informar latitude e longitude.
-
 ## O que mudou
 
 - O formulário recebe endereço e cidade/UF.
@@ -56,5 +54,5 @@ Ao salvar o pedido, o sistema tenta encontrar a localização automaticamente.
 ## Observação importante
 
 A V2.4 ainda usa uma estimativa de distância geográfica (Haversine) e uma
-velocidade média para estimar tempo. Ela ainda NÃO calcula o caminho real pelas
+velocidade média para estimar tempo. Ela ainda NAO calcula o caminho real pelas
 ruas. Essa é a próxima evolução do projeto.

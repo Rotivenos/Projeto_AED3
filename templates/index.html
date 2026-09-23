@@ -1,10 +1,15 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Otimização de Rotas - V2.4</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+>
+
+<link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='style.css') }}"
+>
 </head>
 <body>
 <header>
@@ -35,9 +40,6 @@
 
         <div class="panel">
             <h2>Novo pedido</h2>
-            <p class="muted">
-                Não é necessário informar latitude ou longitude. O sistema localiza o endereço automaticamente.
-            </p>
 
             <form action="{{ url_for('adicionar_pedido') }}" method="post">
                 <label>Cliente</label>
@@ -182,19 +184,29 @@
                 </thead>
                 <tbody>
                 {% for caminhao in caminhoes %}
-                    <tr>
-                        <td>{{ caminhao.placa }}</td>
-                        <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
-                        <td>{{ caminhao.status }}</td>
-                        <td>
-                            <form action="{{ url_for('excluir_caminhao', caminhao_id=caminhao.id) }}" method="post">
-                                <button class="danger" type="submit">Excluir</button>
-                            </form>
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr><td colspan="4">Nenhum caminhão cadastrado.</td></tr>
-                {% endfor %}
+<tr>
+    <td>{{ caminhao.placa }}</td>
+    <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
+    <td>{{ caminhao.status }}</td>
+    <td>
+        <form
+            action="{{ url_for(
+                'excluir_caminhao',
+                caminhao_id=caminhao.id
+            ) }}"
+            method="post"
+        >
+            <button class="danger" type="submit">
+                Excluir
+            </button>
+        </form>
+    </td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="4">Nenhum caminhão cadastrado.</td>
+</tr>
+{% endfor %}
                 </tbody>
             </table>
         </div>
@@ -207,32 +219,36 @@
                 </thead>
                 <tbody>
                 {% for pedido in pedidos %}
-                    <tr>
-                        <td>{{ pedido.cliente }}</td>
-                        <td title="{{ pedido.endereco_geocodificado or '' }}">
-                            {{ pedido.endereco }}{% if pedido.cidade %}, {{ pedido.cidade }}{% endif %}
-                        </td>
-                        <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
-                        <td>{{ pedido.prazo }}</td>
-                        <td>
-                            <form action="{{ url_for('excluir_pedido', pedido_id=pedido.id) }}" method="post">
-                                <button class="danger" type="submit">Excluir</button>
-                            </form>
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr><td colspan="5">Nenhum pedido cadastrado.</td></tr>
-                {% endfor %}
+<tr>
+    <td>{{ pedido.cliente }}</td>
+    <td>
+        {{ pedido.endereco }}
+        {% if pedido.cidade %}, {{ pedido.cidade }}{% endif %}
+    </td>
+    <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
+    <td>{{ pedido.prazo }}</td>
+    <td>
+        <form
+            action="{{ url_for(
+                'excluir_pedido',
+                pedido_id=pedido.id
+            ) }}"
+            method="post"
+        >
+            <button class="danger" type="submit">
+                Excluir
+            </button>
+        </form>
+    </td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="5">Nenhum pedido cadastrado.</td>
+</tr>
+{% endfor %}
                 </tbody>
             </table>
         </div>
-    </section>
-
-    <section class="panel note">
-        <strong>Como funciona a localização:</strong>
-        o sistema envia o endereço digitado para o Nominatim/OpenStreetMap,
-        recebe a latitude e longitude e salva essas coordenadas no banco.
-        O usuário não precisa conhecer coordenadas. O mapa usa os dados do OpenStreetMap.
     </section>
 </main>
 </body>
