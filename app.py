@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from enderecos import buscar_cep, geocodificar, normalizar_cep
-from roteamento import otimizar
+from roteamento import getotimizar
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "rotas.db"
@@ -279,7 +279,7 @@ def executar_otimizacao():
     pedidos_geocodificados = [p for p in pedidos if p["latitude"] is not None]
     pedidos_sem_geo = [p for p in pedidos if p["latitude"] is None]
 
-    resultado = otimizar(pedidos_geocodificados, caminhoes, deposito)
+    resultado = getotimizar(pedidos_geocodificados, caminhoes, deposito)
 
     if pedidos_sem_geo:
         resultado = dict(resultado)

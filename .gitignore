@@ -220,3 +220,6 @@ __marimo__/
 # Banco de dados local
 rotas.db
 rotas.db-*
+
+# Inicializador local do servidor
+iniciar_servidor.bat

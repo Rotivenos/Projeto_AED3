@@ -9,7 +9,7 @@
 <body>
 <header>
     <h1>Sistema de Otimização de Rotas</h1>
-    <p>V2.3 — SQLite + Flask + OR-Tools + Geocodificação (ViaCEP / OpenStreetMap)</p>
+    <p>SQLite + Flask + Otimização própria + Geocodificação (ViaCEP / OpenStreetMap)</p>
 </header>
 
 <main>
@@ -111,13 +111,13 @@
             {% else %}
                 {% if resultado.pedidos_nao_atendidos %}
                 <div class="alert warning">
-                    <strong>{{ resultado.pedidos_nao_atendidos|length }} pedido(s) não coube(ram) em nenhuma rota (capacidade ou prazo):</strong>
+                    <strong>{{ resultado.pedidos_nao_atendidos|length }} pedido(s) não foi(ram) encaixado(s) nas rotas:</strong>
                     <ul>
                     {% for pendente in resultado.pedidos_nao_atendidos %}
                         <li>{{ pendente.cliente }} — {{ pendente.endereco }}</li>
                     {% endfor %}
                     </ul>
-                    <p>Aumente a capacidade/quantidade de caminhões ou revise o prazo desses pedidos.</p>
+                    <p>O algoritmo não encontrou um encaixe respeitando capacidade, prazos e retorno ao depósito. Revise esses limites; a busca não garante encontrar todas as soluções possíveis.</p>
                 </div>
                 {% endif %}
 
