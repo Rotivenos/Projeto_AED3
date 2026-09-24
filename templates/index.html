@@ -124,7 +124,8 @@
                 <div class="stats">
                     <div><strong>{{ resultado.pedidos_atendidos }}</strong><span>Pedidos atendidos</span></div>
                     <div><strong>{{ resultado.caminhoes_utilizados }}</strong><span>Caminhões utilizados</span></div>
-                    <div><strong>{{ resultado.distancia_total }}</strong><span>Minutos de deslocamento</span></div>
+                    <div><strong>{{ resultado.tempo_deslocamento_total_min }}</strong><span>Minutos de deslocamento (com retorno)</span></div>
+                    <div><strong>{{ resultado.distancia_total_km }} km</strong><span>Distância total (com retorno)</span></div>
                     <div><strong>{{ resultado.pedidos_nao_atendidos|length }}</strong><span>Pedidos não roteados</span></div>
                 </div>
 
@@ -136,6 +137,8 @@
                             <p>
                                 Carga: {{ rota.carga_kg }} / {{ rota.capacidade_kg }} kg
                                 — Ocupação: {{ rota.ocupacao }}%
+                                — Percurso completo: {{ rota.distancia_total_km }} km
+                                — Deslocamento: {{ rota.tempo_deslocamento_min }} min
                             </p>
                         </div>
                     </div>
@@ -166,6 +169,16 @@
                             <td>{{ parada.prazo }}</td>
                         </tr>
                         {% endfor %}
+                        <tr>
+                            <td>{{ rota.paradas|length + 1 }}</td>
+                            <td>Retorno ao depósito</td>
+                            <td>{{ rota.retorno_deposito.endereco }}</td>
+                            <td>—</td>
+                            <td>{{ rota.retorno_deposito.distancia_km }} km</td>
+                            <td>{{ rota.retorno_deposito.distancia_acumulada_km }} km</td>
+                            <td>{{ rota.retorno_deposito.chegada }}</td>
+                            <td>18:00</td>
+                        </tr>
                         </tbody>
                     </table>
                 </div>

@@ -149,6 +149,10 @@ def otimizar(pedidos, caminhoes, deposito):
         index = manager.NodeToIndex(node)
         time_dimension.CumulVar(index).SetRange(janela[0], janela[1])
 
+    for vehicle_id in range(data["num_vehicles"]):
+        for index in (routing.Start(vehicle_id), routing.End(vehicle_id)):
+            time_dimension.CumulVar(index).SetRange(*data["time_windows"][0])
+
     # Torna cada pedido "opcional": se não houver como encaixá-lo (capacidade
     # ou prazo), o solver paga uma penalidade alta em vez de descartar toda a
     # solução. Isso evita o tudo-ou-nada de antes.
@@ -183,7 +187,8 @@ def otimizar(pedidos, caminhoes, deposito):
 
     resultado = []
     pedidos_atendidos = set()
-    distancia_total = 0
+    tempo_deslocamento_total_min = 0
+    distancia_total_km = 0
 
     for vehicle_id, caminhao in enumerate(caminhoes):
         index = routing.Start(vehicle_id)
@@ -196,6 +201,7 @@ def otimizar(pedidos, caminhoes, deposito):
         paradas = []
         no_anterior = 0  # depósito
         distancia_acumulada_km = 0
+        tempo_deslocamento_min = 0
 
         while not routing.IsEnd(index):
             node = manager.IndexToNode(index)
@@ -226,12 +232,16 @@ def otimizar(pedidos, caminhoes, deposito):
 
             next_index = solution.Value(routing.NextVar(index))
 
-            if not routing.IsEnd(next_index):
-                a = manager.IndexToNode(index)
-                b = manager.IndexToNode(next_index)
-                distancia_total += data["distance_matrix"][a][b]
+            a = manager.IndexToNode(index)
+            b = manager.IndexToNode(next_index)
+            tempo_deslocamento_min += data["distance_matrix"][a][b]
 
             index = next_index
+
+        distancia_retorno_km = data["distancia_km_matrix"][no_anterior][data["depot"]]
+        distancia_rota_km = round(distancia_acumulada_km + distancia_retorno_km, 1)
+        tempo_deslocamento_total_min += tempo_deslocamento_min
+        distancia_total_km += distancia_rota_km
 
         resultado.append({
             "caminhao_id": caminhao["id"],
@@ -240,6 +250,14 @@ def otimizar(pedidos, caminhoes, deposito):
             "carga_kg": carga_total,
             "ocupacao": round((carga_total / caminhao["capacidade_kg"]) * 100, 1),
             "paradas": paradas,
+            "tempo_deslocamento_min": tempo_deslocamento_min,
+            "distancia_total_km": distancia_rota_km,
+            "retorno_deposito": {
+                "endereco": deposito["endereco"],
+                "distancia_km": distancia_retorno_km,
+                "distancia_acumulada_km": distancia_rota_km,
+                "chegada": minutos_para_hora(solution.Value(time_dimension.CumulVar(index))),
+            },
         })
 
     pedidos_nao_atendidos = [
@@ -252,5 +270,6 @@ def otimizar(pedidos, caminhoes, deposito):
         "pedidos_atendidos": len(pedidos_atendidos),
         "pedidos_nao_atendidos": pedidos_nao_atendidos,
         "caminhoes_utilizados": len(resultado),
-        "distancia_total": distancia_total,
+        "tempo_deslocamento_total_min": tempo_deslocamento_total_min,
+        "distancia_total_km": round(distancia_total_km, 1),
     }
