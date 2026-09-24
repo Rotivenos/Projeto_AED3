@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Banco de dados local
+rotas.db
+rotas.db-*

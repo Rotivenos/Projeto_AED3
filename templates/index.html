@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Otimização de Rotas - V2.2</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+    <h1>Sistema de Otimização de Rotas</h1>
+    <p>V2.3 — SQLite + Flask + OR-Tools + Geocodificação (ViaCEP / OpenStreetMap)</p>
+</header>
+
+<main>
+    {% if aviso %}
+    <div class="alert {{ 'error' if aviso_tipo == 'erro' else 'warning' }}">
+        <p>{{ aviso }}</p>
+    </div>
+    {% endif %}
+
+    <section class="top-grid">
+        <div class="panel">
+            <h2>Novo caminhão</h2>
+            <form action="{{ url_for('adicionar_caminhao') }}" method="post">
+                <label>Placa</label>
+                <input name="placa" required placeholder="ABC1D23">
+
+                <label>Capacidade (kg)</label>
+                <input name="capacidade_kg" type="number" min="1" required placeholder="10000">
+
+                <button type="submit">Cadastrar caminhão</button>
+            </form>
+        </div>
+
+        <div class="panel">
+            <h2>Novo pedido</h2>
+            <form action="{{ url_for('adicionar_pedido') }}" method="post">
+                <label>Cliente</label>
+                <input name="cliente" required placeholder="Mercado A">
+
+                <label>CEP</label>
+                <input name="cep" class="campo-cep" placeholder="00000-000" maxlength="9" autocomplete="off">
+                <p class="ajuda-campo campo-cep-status" hidden></p>
+
+                <label>Endereço</label>
+                <input name="endereco" class="campo-endereco" required placeholder="Rua X, 100">
+                <p class="ajuda-campo">O CEP é opcional, mas melhora a precisão da rota (busca via ViaCEP e geocodificação via OpenStreetMap).</p>
+
+                <label>Peso (kg)</label>
+                <input name="peso_kg" type="number" min="1" required placeholder="2000">
+
+                <label>Prazo</label>
+                <input name="prazo" type="time" required>
+
+                <button type="submit">Cadastrar pedido</button>
+            </form>
+        </div>
+
+        <div class="panel">
+            <h2>Depósito (origem das rotas)</h2>
+            <form action="{{ url_for('atualizar_deposito') }}" method="post">
+                <label>CEP</label>
+                <input name="cep" class="campo-cep" placeholder="00000-000" maxlength="9" autocomplete="off"
+                       value="{{ deposito.cep if deposito else '' }}">
+                <p class="ajuda-campo campo-cep-status" hidden></p>
+
+                <label>Endereço</label>
+                <input name="endereco" class="campo-endereco" required placeholder="Av. Principal, 1000"
+                       value="{{ deposito.endereco if deposito else '' }}">
+
+                {% if deposito and deposito.latitude is not none %}
+                <p class="status-geo ok">✓ Localizado no mapa ({{ "%.5f"|format(deposito.latitude) }}, {{ "%.5f"|format(deposito.longitude) }})</p>
+                {% elif deposito %}
+                <p class="status-geo erro">✗ Endereço não localizado no mapa. Corrija e salve novamente.</p>
+                {% else %}
+                <p class="status-geo aviso">Depósito ainda não configurado — necessário para otimizar rotas.</p>
+                {% endif %}
+
+                <button type="submit">Salvar depósito</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-title">
+            <h2>Otimização</h2>
+            <form action="{{ url_for('executar_otimizacao') }}" method="post">
+                <button class="primary" type="submit">OTIMIZAR ROTAS</button>
+            </form>
+        </div>
+
+        {% if resultado %}
+            {% if resultado.pedidos_sem_geo %}
+                <div class="alert warning">
+                    <strong>{{ resultado.pedidos_sem_geo|length }} pedido(s) fora da otimização por falta de geocodificação:</strong>
+                    <ul>
+                    {% for pendente in resultado.pedidos_sem_geo %}
+                        <li>{{ pendente.cliente }} — {{ pendente.endereco }}</li>
+                    {% endfor %}
+                    </ul>
+                    <p>Corrija o endereço do pedido e cadastre novamente para incluí-lo na próxima otimização.</p>
+                </div>
+            {% endif %}
+
+            {% if resultado.erro %}
+                <div class="alert error">
+                    <strong>Não foi possível gerar as rotas.</strong>
+                    <p>{{ resultado.erro }}</p>
+                </div>
+            {% else %}
+                {% if resultado.pedidos_nao_atendidos %}
+                <div class="alert warning">
+                    <strong>{{ resultado.pedidos_nao_atendidos|length }} pedido(s) não coube(ram) em nenhuma rota (capacidade ou prazo):</strong>
+                    <ul>
+                    {% for pendente in resultado.pedidos_nao_atendidos %}
+                        <li>{{ pendente.cliente }} — {{ pendente.endereco }}</li>
+                    {% endfor %}
+                    </ul>
+                    <p>Aumente a capacidade/quantidade de caminhões ou revise o prazo desses pedidos.</p>
+                </div>
+                {% endif %}
+
+                <div class="stats">
+                    <div><strong>{{ resultado.pedidos_atendidos }}</strong><span>Pedidos atendidos</span></div>
+                    <div><strong>{{ resultado.caminhoes_utilizados }}</strong><span>Caminhões utilizados</span></div>
+                    <div><strong>{{ resultado.distancia_total }}</strong><span>Minutos de deslocamento</span></div>
+                    <div><strong>{{ resultado.pedidos_nao_atendidos|length }}</strong><span>Pedidos não roteados</span></div>
+                </div>
+
+                {% for rota in resultado.rotas %}
+                <div class="route">
+                    <div class="route-header">
+                        <div>
+                            <h3>Caminhão {{ rota.placa }}</h3>
+                            <p>
+                                Carga: {{ rota.carga_kg }} / {{ rota.capacidade_kg }} kg
+                                — Ocupação: {{ rota.ocupacao }}%
+                            </p>
+                        </div>
+                    </div>
+
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Ordem</th>
+                            <th>Cliente</th>
+                            <th>Endereço</th>
+                            <th>Peso</th>
+                            <th>Distância (trecho)</th>
+                            <th>Distância acumulada</th>
+                            <th>Chegada</th>
+                            <th>Prazo</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for parada in rota.paradas %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td>{{ parada.cliente }}</td>
+                            <td>{{ parada.endereco }}</td>
+                            <td>{{ parada.peso_kg }} kg</td>
+                            <td>{{ parada.distancia_km }} km</td>
+                            <td>{{ parada.distancia_acumulada_km }} km</td>
+                            <td>{{ parada.chegada }}</td>
+                            <td>{{ parada.prazo }}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endfor %}
+            {% endif %}
+        {% endif %}
+    </section>
+
+    <section class="two-col">
+        <div class="panel">
+            <h2>Frota</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Placa</th>
+                    <th>Capacidade</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for caminhao in caminhoes %}
+                <tr>
+                    <td>{{ caminhao.placa }}</td>
+                    <td>{{ "%.0f"|format(caminhao.capacidade_kg) }} kg</td>
+                    <td>{{ caminhao.status }}</td>
+                    <td>
+                        <form action="{{ url_for('excluir_caminhao', caminhao_id=caminhao.id) }}" method="post">
+                            <button class="danger" type="submit">Excluir</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4">Nenhum caminhão cadastrado.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h2>Pedidos</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Cliente</th>
+                    <th>Endereço</th>
+                    <th>Peso</th>
+                    <th>Prazo</th>
+                    <th>Status</th>
+                    <th>Geo</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for pedido in pedidos %}
+                <tr>
+                    <td>{{ pedido.cliente }}</td>
+                    <td>{{ pedido.endereco }}</td>
+                    <td>{{ "%.0f"|format(pedido.peso_kg) }} kg</td>
+                    <td>{{ pedido.prazo }}</td>
+                    <td>{{ pedido.status }}</td>
+                    <td>
+                        {% if pedido.latitude is not none %}
+                        <span class="badge ok" title="{{ '%.5f'|format(pedido.latitude) }}, {{ '%.5f'|format(pedido.longitude) }}">✓</span>
+                        {% else %}
+                        <span class="badge erro" title="Endereço não localizado no mapa">✗</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form action="{{ url_for('excluir_pedido', pedido_id=pedido.id) }}" method="post">
+                            <button class="danger" type="submit">Excluir</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7">Nenhum pedido cadastrado.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+
+<script>
+(function () {
+    function ligarAutocompleteCep(form) {
+        var campoCep = form.querySelector(".campo-cep");
+        var campoEndereco = form.querySelector(".campo-endereco");
+        var status = form.querySelector(".campo-cep-status");
+        if (!campoCep || !campoEndereco) return;
+
+        campoCep.addEventListener("blur", function () {
+            var cep = campoCep.value.replace(/\D/g, "");
+            if (cep.length !== 8) return;
+
+            if (status) {
+                status.hidden = false;
+                status.textContent = "Consultando CEP...";
+            }
+
+            fetch("https://viacep.com.br/ws/" + cep + "/json/")
+                .then(function (resp) { return resp.json(); })
+                .then(function (dados) {
+                    if (dados.erro) {
+                        if (status) status.textContent = "CEP não encontrado.";
+                        return;
+                    }
+                    var partes = [dados.logradouro, dados.bairro, dados.localidade + " - " + dados.uf];
+                    var sugestao = partes.filter(Boolean).join(", ");
+                    if (sugestao && !campoEndereco.value) {
+                        campoEndereco.value = sugestao;
+                    }
+                    if (status) status.textContent = sugestao ? "Endereço preenchido a partir do CEP." : "";
+                })
+                .catch(function () {
+                    if (status) status.textContent = "Não foi possível consultar o CEP agora.";
+                });
+        });
+    }
+
+    document.querySelectorAll("form").forEach(ligarAutocompleteCep);
+})();
+</script>
+</body>
+</html>
