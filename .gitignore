@@ -223,3 +223,10 @@ rotas.db-*
 
 # Inicializador local do servidor
 iniciar_servidor.bat
+
+# .NET / C#
+bin/
+obj/
+.vs/
+*.user
+*.suo
